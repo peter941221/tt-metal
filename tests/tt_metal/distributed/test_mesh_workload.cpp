@@ -294,6 +294,23 @@ TEST_F(MeshWorkloadTestSuite, OverlappingProgramRanges) {
         ThrowsMessage<std::runtime_error>(HasSubstr("overlaps with the previously added range")));
 }
 
+
+TEST(MeshWorkloadTeardownTest, CloseClearsCachedProgramsBeforeMockSubdevices) {
+    MetalEnv mock_env{
+        MetalEnvDescriptor(experimental::get_mock_cluster_desc_name(tt::ARCH::BLACKHOLE, /*num_devices=*/1))};
+    auto mesh_device = mock_env.create_mesh_device(MeshDeviceConfig(MeshShape(1)));
+
+    auto program = initialize_dummy_program(mesh_device->compute_with_storage_grid_size());
+    MeshWorkload workload;
+    workload.add_program(MeshCoordinateRange(mesh_device->shape()), std::move(*program));
+
+    mesh_device->enable_program_cache();
+    EnqueueMeshWorkload(mesh_device->mesh_command_queue(), workload, /*blocking=*/true);
+    EXPECT_GT(mesh_device->num_program_cache_entries(), 0U);
+
+    EXPECT_NO_THROW(mesh_device->close());
+}
+
 TEST_F(MeshWorkloadTest2x4, SimultaneousMeshWorkloads) {
     uint32_t num_programs = 100;
     uint32_t num_heterogeneous_programs = 64;
