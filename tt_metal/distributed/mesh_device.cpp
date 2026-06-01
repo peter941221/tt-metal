@@ -930,6 +930,10 @@ bool MeshDeviceImpl::close_impl(MeshDevice* pimpl_wrapper) {
     drisc_l1_arena_.reset();
 
     if (is_initialized()) {
+        // Cached MeshWorkloads own Programs whose CB teardown walks cb_devices_.
+        // Clear the program cache before releasing scoped_devices_ so the cached
+        // workloads destruct while their underlying devices are still alive.
+        disable_and_clear_program_cache();
         sub_device_manager_tracker_.reset();
         scoped_devices_.reset();
         parent_mesh_.reset();
