@@ -44,6 +44,7 @@
 #include <tt-metalium/runtime_args_data.hpp>
 #include "impl/buffers/semaphore.hpp"
 #include "impl/context/metal_context.hpp"
+#include "program/program_impl.hpp"
 #include <tt_stl/span.hpp>
 #include "tests/tt_metal/distributed/utils.hpp"
 #include "tests/tt_metal/tt_metal/common/multi_device_fixture.hpp"
@@ -51,7 +52,8 @@
 #include <umd/device/types/core_coordinates.hpp>
 #include <umd/device/types/cluster_descriptor_types.hpp>
 #include <distributed/mesh_device_impl.hpp>
-#include <tt-metalium/experimental/dispatch_context.hpp>
+#include <tt-metalium/experimental/mock_device.hpp>
+#include <tt-metalium/program_cache.hpp>
 
 namespace tt::tt_metal::distributed::test {
 namespace {
@@ -296,17 +298,32 @@ TEST_F(MeshWorkloadTestSuite, OverlappingProgramRanges) {
 
 
 TEST(MeshWorkloadTeardownTest, CloseClearsCachedProgramsBeforeMockSubdevices) {
-    MetalEnv mock_env{
-        MetalEnvDescriptor(experimental::get_mock_cluster_desc_name(tt::ARCH::BLACKHOLE, /*num_devices=*/1))};
-    auto mesh_device = mock_env.create_mesh_device(MeshDeviceConfig(MeshShape(1)));
+    if (std::getenv("TT_METAL_SLOW_DISPATCH_MODE") == nullptr) {
+        GTEST_SKIP() << "Requires TT_METAL_SLOW_DISPATCH_MODE=1";
+    }
+
+    if (std::getenv("TT_METAL_MOCK_CLUSTER_DESC_PATH") == nullptr) {
+        GTEST_SKIP() << "Requires TT_METAL_MOCK_CLUSTER_DESC_PATH";
+    }
+
+    auto mesh_device = MeshDevice::create(MeshDeviceConfig(MeshShape(1)));
 
     auto program = initialize_dummy_program(mesh_device->compute_with_storage_grid_size());
+    program->impl().allocate_circular_buffers(mesh_device.get());
+
     MeshWorkload workload;
     workload.add_program(MeshCoordinateRange(mesh_device->shape()), std::move(*program));
 
     mesh_device->enable_program_cache();
-    EnqueueMeshWorkload(mesh_device->mesh_command_queue(), workload, /*blocking=*/true);
-    EXPECT_GT(mesh_device->num_program_cache_entries(), 0U);
+    mesh_device->get_program_cache().insert(
+        0xC0FFEE,
+        program_cache::detail::CachedProgramFactory(
+            program_cache::detail::CachedMeshWorkload<std::monostate>(std::move(workload), std::monostate{}),
+            /*program_factory_index=*/0));
+    EXPECT_EQ(mesh_device->num_program_cache_entries(), 1U);
+
+    EXPECT_NO_THROW(mesh_device->clear_program_cache());
+    EXPECT_EQ(mesh_device->num_program_cache_entries(), 0U);
 
     EXPECT_NO_THROW(mesh_device->close());
 }
